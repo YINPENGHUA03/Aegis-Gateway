@@ -2,22 +2,21 @@ package main
 
 import (
 	"log"
-	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"aegis-gateway/internal/bootstrap"
 )
 
 func main() {
-	r := gin.Default()
+	log.Println("Initalizing...")
 
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  "Aegis Gateway Online",
-			"version": "v1.0.0",
-		})
-	})
-
+	//Initailize MYSQL and Redis
+	bootstrap.InitMySQL()
+	bootstrap.InitRedis()
+	// Create a default Gin router.
+	r := bootstrap.SetupRouter()
+	// Log a startup message.
 	log.Println("Aegis Gateway started, listening port:8080...")
+	// Start the HTTP server on port 8080 and handle potential startup errors.
 	if err := r.Run(":8080"); err != nil {
 		log.Fatalf("Gateway startup failed: -%v", err)
 	}
