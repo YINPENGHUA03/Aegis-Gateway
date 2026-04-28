@@ -1,0 +1,22 @@
+# Binary files
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Dependencies and Logs
+vendor/
+*.log
+
+# Compilation output
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment Configuration
+.env
