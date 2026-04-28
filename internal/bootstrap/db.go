@@ -11,7 +11,7 @@ import (
 )
 
 func InitMySQL() {
-	dsn := "root:0410@tcp(127.0.0.1:3309)/appointment?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := "root:0410@tcp(127.0.0.1:3309)/appoint_db?charset=utf8mb4&parseTime=True&loc=Local"
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
