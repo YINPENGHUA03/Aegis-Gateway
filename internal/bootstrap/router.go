@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"aegis-gateway/internal/api/handler"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,8 @@ func SetupRouter() *gin.Engine {
 				"redis":  "connected",
 			})
 		})
+		//Registration route
+		v1.POST("/reserve", handler.HandleReserve)
 	}
 
 	return r
