@@ -2,7 +2,10 @@ package bootstrap
 
 import (
 	"aegis-gateway/internal/api/handler"
+	"aegis-gateway/internal/api/middleware"
 	"net/http"
+
+	"golang.org/x/time/rate"
 
 	"github.com/gin-gonic/gin"
 )
@@ -11,7 +14,8 @@ import (
 func SetupRouter() *gin.Engine {
 	r := gin.Default()
 
-	// 后续这里可以挂载我们手写的防并发中间件 (Middleware)
+	// 防并发中间件 (Middleware)
+	r.Use(middleware.IPRateLimitMiddleware(rate.Limit(5), 10))
 
 	// API group
 	v1 := r.Group("/api/v1")
