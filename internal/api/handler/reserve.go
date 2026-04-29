@@ -21,7 +21,7 @@ func HandleReserve(c *gin.Context) {
 	// 【面试考点】：为什么用 ShouldBindJSON 而不是 BindJSON？
 	// BindJSON 在校验失败时会在底层强行写入 HTTP 400 状态码并终止请求，你无法自定义错误返回格式。
 	// ShouldBindJSON 把控制权交还给开发者，我们可以封装统一的 JSON 错误协议。
-
+	//gin.H = map[string]interface{} 的简写，用来快速拼一个 key-value 集合给 c.JSON() 序列化输出
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":  400,
