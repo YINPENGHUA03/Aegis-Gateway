@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,9 +12,10 @@ import (
 
 // ipBucket 关联一个 IP 的令牌桶 + 它的最近活跃时间
 // 最近活跃时间用于定期清理"僵尸 IP"，防止 map 无限增长导致内存泄漏
+// Storing time using atomic types
 type ipBucket struct {
 	limiter  *rate.Limiter
-	lastSeen time.Time
+	lastSeen atomic.Int64
 }
 
 // IPRateLimiter 基于 IP 的限流器集合
@@ -45,7 +47,7 @@ func (i *IPRateLimiter) getLimiter(ip string) *rate.Limiter {
 	i.mu.RUnlock()
 
 	if exists {
-		bucket.lastSeen = time.Now() // 注意：这里有数据竞争！撕裂读最坏的结果是IP多留5min,但不影响限流正确性
+		bucket.lastSeen.Store(time.Now().Unix())
 		return bucket.limiter
 	}
 
@@ -56,15 +58,15 @@ func (i *IPRateLimiter) getLimiter(ip string) *rate.Limiter {
 	// 【DCL 关键】拿到写锁后再次确认（其他 goroutine 可能已经创建）
 	bucket, exists = i.buckets[ip]
 	if exists {
-		bucket.lastSeen = time.Now()
+		bucket.lastSeen.Store(time.Now().Unix())
 		return bucket.limiter
 	}
 
 	// 真正创建
 	bucket = &ipBucket{
-		limiter:  rate.NewLimiter(i.rate, i.burst),
-		lastSeen: time.Now(),
+		limiter: rate.NewLimiter(i.rate, i.burst),
 	}
+	bucket.lastSeen.Store(time.Now().Unix())
 	i.buckets[ip] = bucket
 	return bucket.limiter
 }
@@ -77,7 +79,7 @@ func (i *IPRateLimiter) cleanupLoop() {
 	for range ticker.C {
 		i.mu.Lock()
 		for ip, bucket := range i.buckets {
-			if time.Since(bucket.lastSeen) > 10*time.Minute {
+			if time.Now().Unix()-bucket.lastSeen.Load() > 600 {
 				delete(i.buckets, ip)
 			}
 		}
