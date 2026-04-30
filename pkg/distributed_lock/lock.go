@@ -1,8 +1,8 @@
-package distributedlock
+package distributed_lock
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"time"
 
@@ -37,22 +37,24 @@ func New(client *redis.Client, key string, ttl time.Duration) *RedisLock {
 }
 
 func (l *RedisLock) TryLock(ctx context.Context) (bool, error) {
-	//Generate UUID
 	value := uuid.New().String()
 
+	// 保证原子性：只有 key 不存在时才设置，并且同时带上过期时间
 	result, err := l.client.SetArgs(ctx, l.key, value, redis.SetArgs{
 		Mode: "NX",
 		TTL:  l.ttl,
 	}).Result()
 
-	// Cannot get the lock
-	if result != "OK" {
+	// 错误处理顺序：先 err 后 result，否则真错误会被当成"锁被占"吞掉
+	// 锁被占（NX 失败）：err==redis.Nil，业务正常情况
+	if errors.Is(err, redis.Nil) {
 		return false, nil
 	}
+	// 真正的故障（网络、Redis 异常等）
 	if err != nil {
-		fmt.Println("Fail to lock")
 		return false, err
 	}
+	// 拿到锁
 	if result == "OK" {
 		l.mu.Lock()
 		l.value = value
@@ -61,6 +63,14 @@ func (l *RedisLock) TryLock(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// Value 返回当前锁持有的 UUID（未加锁时为空串）
+// Day 6 单元测试和 Lua 解锁脚本调试时会用到
+func (l *RedisLock) Value() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.value
 }
 
 // LockWithRetry Attempt to acquire the lock repeatedly within the retryTimeout window
