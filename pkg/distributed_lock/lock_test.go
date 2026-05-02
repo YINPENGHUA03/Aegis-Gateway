@@ -17,15 +17,15 @@ func newTestRedis() *redis.Client {
 func TestLock_FirstAcquireSucceeds(t *testing.T) {
 	rdb := newTestRedis()
 	ctx := context.Background()
-	rdb.Del(ctx, "lock:test:user001") // 清理上次残留
+	rdb.Del(ctx, "lock:test:user001")
 
 	lock := New(rdb, "lock:test:user001", 5*time.Second)
 	ok, err := lock.TryLock(ctx)
 	if err != nil {
-		t.Fatalf("redis err: %v", err)
+		t.Fatalf("TryLock() error = %v, want nil", err)
 	}
 	if !ok {
-		t.Fatal("first lock should succeed")
+		t.Fatalf("TryLock() ok = false, want true (clean key, first acquire)")
 	}
 }
 
@@ -36,16 +36,21 @@ func TestLock_SecondAcquireFails(t *testing.T) {
 	rdb.Del(ctx, "lock:test:user002")
 
 	lockA := New(rdb, "lock:test:user002", 5*time.Second)
-	okA, _ := lockA.TryLock(ctx)
+	okA, err := lockA.TryLock(ctx)
+	if err != nil {
+		t.Fatalf("lockA.TryLock() error = %v, want nil", err)
+	}
 	if !okA {
-		t.Fatal("lockA should succeed")
+		t.Fatalf("lockA.TryLock() ok = false, want true (clean key)")
 	}
 
-	// 模拟另一个进程尝试拿同一把锁
 	lockB := New(rdb, "lock:test:user002", 5*time.Second)
-	okB, _ := lockB.TryLock(ctx)
+	okB, err := lockB.TryLock(ctx)
+	if err != nil {
+		t.Fatalf("lockB.TryLock() error = %v, want nil", err)
+	}
 	if okB {
-		t.Fatal("lockB should fail because lockA still holds it")
+		t.Fatalf("lockB.TryLock() ok = true, want false (lockA still holds the key)")
 	}
 }
 
@@ -55,19 +60,24 @@ func TestLock_AutoExpire(t *testing.T) {
 	ctx := context.Background()
 	rdb.Del(ctx, "lock:test:user003")
 
-	lockA := New(rdb, "lock:test:user003", 1*time.Second) // 短 TTL 方便测试
-	lockA.TryLock(ctx)
+	lockA := New(rdb, "lock:test:user003", 1*time.Second)
+	if _, err := lockA.TryLock(ctx); err != nil {
+		t.Fatalf("lockA.TryLock() error = %v, want nil", err)
+	}
 
-	time.Sleep(1500 * time.Millisecond) // 等过期
+	time.Sleep(1500 * time.Millisecond)
 
 	lockB := New(rdb, "lock:test:user003", 1*time.Second)
-	okB, _ := lockB.TryLock(ctx)
+	okB, err := lockB.TryLock(ctx)
+	if err != nil {
+		t.Fatalf("lockB.TryLock() error = %v, want nil", err)
+	}
 	if !okB {
-		t.Fatal("lockB should succeed after lockA expired")
+		t.Fatalf("lockB.TryLock() ok = false, want true (lockA TTL should have expired after 1.5s)")
 	}
 }
 
-// 用例 4：两次 TryLock 成功后写入的 UUID 必须不同（不同 key 才能都成功）
+// 用例 4：两个锁实例的 UUID 必须不同
 func TestLock_UUIDIsUnique(t *testing.T) {
 	rdb := newTestRedis()
 	ctx := context.Background()
@@ -77,13 +87,65 @@ func TestLock_UUIDIsUnique(t *testing.T) {
 	b := New(rdb, "lock:test:uuid_b", 5*time.Second)
 
 	if _, err := a.TryLock(ctx); err != nil {
-		t.Fatalf("a TryLock err: %v", err)
+		t.Fatalf("a.TryLock() error = %v, want nil", err)
 	}
 	if _, err := b.TryLock(ctx); err != nil {
-		t.Fatalf("b TryLock err: %v", err)
+		t.Fatalf("b.TryLock() error = %v, want nil", err)
 	}
 
 	if a.Value() == b.Value() {
-		t.Fatal("two lock instances must have different UUIDs")
+		t.Fatalf("a.Value() == b.Value() == %q, want two distinct UUIDs", a.Value())
+	}
+}
+
+// 用例 5：加锁后解锁，解锁应该成功，且 Redis key 应该被删除
+func TestLock_UnlockSucceeds(t *testing.T) {
+	rdb := newTestRedis()
+	ctx := context.Background()
+	rdb.Del(ctx, "lock:test:user005")
+
+	lock := New(rdb, "lock:test:user005", 5*time.Second)
+	if _, err := lock.TryLock(ctx); err != nil {
+		t.Fatalf("TryLock() error = %v, want nil", err)
+	}
+
+	if !lock.Unlock(ctx) {
+		t.Fatalf("Unlock() = false, want true (lock just acquired by this instance)")
+	}
+
+	n, err := rdb.Exists(ctx, "lock:test:user005").Result()
+	if err != nil {
+		t.Fatalf("rdb.Exists() error = %v, want nil", err)
+	}
+	if n != 0 {
+		t.Fatalf("rdb.Exists(key) = %d, want 0 (key should be removed after successful Unlock)", n)
+	}
+}
+
+// 用例 6：持有错误 UUID 的实例不能解锁别人的锁（Lua 原子比对保护）
+func TestLock_WrongUnlock(t *testing.T) {
+	rdb := newTestRedis()
+	ctx := context.Background()
+	rdb.Del(ctx, "lock:test:user006")
+
+	a := New(rdb, "lock:test:user006", 5*time.Second)
+	if _, err := a.TryLock(ctx); err != nil {
+		t.Fatalf("a.TryLock() error = %v, want nil", err)
+	}
+
+	// lockB 持有假 UUID，模拟另一个进程试图释放它不持有的锁
+	b := New(rdb, "lock:test:user006", 5*time.Second)
+	b.value = "fake-uuid-that-does-not-match"
+
+	if b.Unlock(ctx) {
+		t.Fatalf("b.Unlock() = true, want false (Lua should reject mismatched UUID)")
+	}
+
+	n, err := rdb.Exists(ctx, "lock:test:user006").Result()
+	if err != nil {
+		t.Fatalf("rdb.Exists() error = %v, want nil", err)
+	}
+	if n != 1 {
+		t.Fatalf("rdb.Exists(key) = %d, want 1 (lockA's key must not be deleted by failed unlock)", n)
 	}
 }
