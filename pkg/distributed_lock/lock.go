@@ -78,8 +78,11 @@ func (l *RedisLock) LockWithRetry(ctx context.Context, retryTimeout time.Duratio
 	retryCtx, cancel := context.WithTimeout(ctx, retryTimeout)
 	defer cancel()
 
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
 	for {
-		ok, err := l.TryLock(ctx)
+		ok, err := l.TryLock(retryCtx)
 		if err != nil {
 			return false, err
 		}
@@ -91,8 +94,42 @@ func (l *RedisLock) LockWithRetry(ctx context.Context, retryTimeout time.Duratio
 		select {
 		case <-retryCtx.Done():
 			return false, nil
-		case <-time.After(500 * time.Millisecond):
+		case <-ticker.C:
+			continue
 			// Proceed to the next iteration of the for loop
 		}
 	}
+}
+
+func (l *RedisLock) Unlock(ctx context.Context) bool {
+	l.mu.Lock()
+	value := l.value
+	//close(l.stopDogCh)
+	l.mu.Unlock()
+
+	if value == "" {
+		return false
+	}
+
+	luaScript := `if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+    else
+    return 0
+    end`
+
+	result, err := l.client.Eval(ctx, luaScript, []string{l.key}, value).Result()
+	if err != nil {
+		return false
+	}
+	i, ok := result.(int64) // 这种写法不会 panic，ok 会告诉你转换是否成功
+	if !ok {
+		return false
+	}
+	l.mu.Lock()
+	if l.value == value {
+		l.value = ""
+	}
+	l.mu.Unlock()
+
+	return i == 1
 }
