@@ -93,8 +93,11 @@ func IPRateLimitMiddleware(r rate.Limit, b int) gin.HandlerFunc {
 	limiter := NewIPRateLimiter(r, b)
 
 	return func(c *gin.Context) {
-		ip := c.ClientIP() // Gin 自带的客户端 IP 提取，会处理 X-Forwarded-For
-		//安全陷阱：攻击者可以伪造这个头绕过你的限流。
+		//安全陷阱：直接使用 c.ClientIP() 存在安全风险，因为客户端可以通过伪造 X-Forwarded-For 等HTTP头部来绕过IP限制。
+		//在生产环境中，应确保只信任来自可信代理（如负载均衡器）设置的此类头部。
+		//更安全的做法是直接从TCP连接中获取IP地址，但这会失去通过代理传递的原始客户端IP信息。
+		// 综合考虑，我们暂时保留c.ClientIP()，但强调了其风险。
+		ip := c.ClientIP()
 
 		if !limiter.getLimiter(ip).Allow() {
 			c.JSON(http.StatusTooManyRequests, gin.H{

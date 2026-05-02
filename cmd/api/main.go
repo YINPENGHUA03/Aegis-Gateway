@@ -18,6 +18,6 @@ func main() {
 	log.Println("Aegis Gateway started, listening port:8080...")
 	// Start the HTTP server on port 8080 and handle potential startup errors.
 	if err := r.Run(":8080"); err != nil {
-		log.Fatalf("Gateway startup failed: -%v", err)
+		log.Fatalf("Gateway startup failed: %v", err)
 	}
 }
