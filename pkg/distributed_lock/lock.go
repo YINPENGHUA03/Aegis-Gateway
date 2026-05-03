@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// stopOnce 保证 close(stopDogCh) 只执行一次，避免对已关闭 channel 二次 close 导致 panic
 type RedisLock struct {
 	client    *redis.Client
 	key       string
@@ -17,6 +18,7 @@ type RedisLock struct {
 	ttl       time.Duration
 	mu        sync.Mutex
 	stopDogCh chan struct{}
+	stopOnce  sync.Once
 }
 
 // New 构造一把新锁。仅分配内存，不会真的去 Redis 加锁。
@@ -33,6 +35,35 @@ func New(client *redis.Client, key string, ttl time.Duration) *RedisLock {
 		key:       key,
 		ttl:       ttl,
 		stopDogCh: make(chan struct{}),
+	}
+}
+
+func (l *RedisLock) startWatchdog(uuidvalue string) {
+	ticker := time.NewTicker(l.ttl / 3)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			//"PEXPIRE" 毫秒精度
+			luaScript := `
+		if redis.call("GET", KEYS[1])==ARGV[1] then
+		    return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+		else
+		    return 0
+		end`
+			// ctx 用 context.Background() — 因为业务的 ctx 可能很短，看门狗自己管自己的生命周期
+			result, err := l.client.Eval(context.Background(), luaScript, []string{l.key}, uuidvalue, int64(l.ttl/time.Millisecond)).Result()
+			if err != nil {
+				return
+			}
+			i, ok := result.(int64)
+			if !ok || i == 0 {
+				return
+			}
+		case <-l.stopDogCh:
+			return
+		}
 	}
 }
 
@@ -58,7 +89,9 @@ func (l *RedisLock) TryLock(ctx context.Context) (bool, error) {
 	if result == "OK" {
 		l.mu.Lock()
 		l.value = value
-		// go l.startWatchdog(value)
+		l.stopDogCh = make(chan struct{}) // ← 重新 make
+		l.stopOnce = sync.Once{}          // ← Once 也重置
+		go l.startWatchdog(value)
 		l.mu.Unlock()
 		return true, nil
 	}
@@ -104,7 +137,8 @@ func (l *RedisLock) LockWithRetry(ctx context.Context, retryTimeout time.Duratio
 func (l *RedisLock) Unlock(ctx context.Context) bool {
 	l.mu.Lock()
 	value := l.value
-	//close(l.stopDogCh)
+	//对一个已经关闭的 channel 再调一次 close 会 panic。（若业务代码两次调用Unlcok会崩）
+	l.stopOnce.Do(func() { close(l.stopDogCh) })
 	l.mu.Unlock()
 
 	if value == "" {
