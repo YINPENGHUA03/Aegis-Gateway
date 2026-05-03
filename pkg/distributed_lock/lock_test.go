@@ -149,3 +149,54 @@ func TestLock_WrongUnlock(t *testing.T) {
 		t.Fatalf("rdb.Exists(key) = %d, want 1 (lockA's key must not be deleted by failed unlock)", n)
 	}
 }
+
+// 用例 7：看门狗能持续续期，业务时长超过 TTL 也能保持互斥
+func TestLock_WatchdogKeepsAlive(t *testing.T) {
+	rdb := newTestRedis()
+	ctx := context.Background()
+	rdb.Del(ctx, "lock:test:user007")
+
+	a := New(rdb, "lock:test:user007", 1*time.Second) // 短 TTL
+	if _, err := a.TryLock(ctx); err != nil {
+		t.Fatalf("a.TryLock() error = %v, want nil", err)
+	}
+	defer a.Unlock(ctx)
+
+	// 业务跑 3 秒（远大于 TTL=1s），看门狗每 333ms 续一次
+	time.Sleep(3 * time.Second)
+
+	// 在第 3 秒，B 应该还是抢不到锁（如果看门狗失效，TTL 早过期了）
+	b := New(rdb, "lock:test:user007", 1*time.Second)
+	okB, err := b.TryLock(ctx)
+	if err != nil {
+		t.Fatalf("b.TryLock() error = %v, want nil", err)
+	}
+	if okB {
+		t.Fatalf("b.TryLock() ok = true, want false (watchdog should keep extending TTL)")
+	}
+}
+
+// 用例 8：Unlock 后，看门狗应停止续期，TTL 自然过期后别人能抢到
+func TestLock_WatchdogStopsAfterUnlock(t *testing.T) {
+	rdb := newTestRedis()
+	ctx := context.Background()
+	rdb.Del(ctx, "lock:test:user008")
+
+	a := New(rdb, "lock:test:user008", 2*time.Second)
+	if _, err := a.TryLock(ctx); err != nil {
+		t.Fatalf("a.TryLock() error = %v, want nil", err)
+	}
+	if !a.Unlock(ctx) {
+		t.Fatalf("a.Unlock() = false, want true")
+	}
+
+	// Unlock 应立即删除 key；不需要等 TTL 过期
+	b := New(rdb, "lock:test:user008", 2*time.Second)
+	okB, err := b.TryLock(ctx)
+	if err != nil {
+		t.Fatalf("b.TryLock() error = %v, want nil", err)
+	}
+	if !okB {
+		t.Fatalf("b.TryLock() ok = false, want true (key removed by Unlock)")
+	}
+}
