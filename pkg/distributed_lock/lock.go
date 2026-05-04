@@ -27,8 +27,8 @@ type RedisLock struct {
 // 参数:
 //
 //	client: 复用的 Redis 客户端实例（来自 global.Redis）
-//	key:    锁的 Redis key，建议格式 "lock:appoint:{userID}"
-//	ttl:    锁的过期时间，建议 5s（配合 Day 7 看门狗续期）
+//	key:    锁的 Redis key，格式 "lock:appoint:{userID}"
+//	ttl:    锁的过期时间，
 func New(client *redis.Client, key string, ttl time.Duration) *RedisLock {
 	return &RedisLock{
 		client:    client,
