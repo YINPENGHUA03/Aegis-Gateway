@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"log"
+	"os"
 	"time"
 
 	"aegis-gateway/internal/global"
@@ -28,4 +29,17 @@ func InitRedis() {
 
 	global.Redis = rdb // Assign to a global variable
 	log.Println(" Redis Client initialisation successful!")
+
+	content, err := os.ReadFile("scripts/lua/reserve.lua")
+	if err != nil {
+		log.Fatalf("Fail to readfile: %v", err)
+	}
+	script := string(content)
+
+	//Redis用SHA1做脚本缓存的key，节省流量和CPU时间
+	sha, err := rdb.ScriptLoad(ctx, script).Result()
+	if err != nil {
+		log.Fatalf("Script load failed: %v", err)
+	}
+	global.ReserveSHA = sha
 }

@@ -7,6 +7,7 @@ import (
 )
 
 var (
-	DB    *sql.DB       // Global MySQL connection pool instance
-	Redis *redis.Client // Global Redis client instance
+	DB         *sql.DB       // Global MySQL connection pool instance
+	Redis      *redis.Client // Global Redis client instance
+	ReserveSHA string
 )
