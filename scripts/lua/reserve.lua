@@ -1,6 +1,6 @@
 --KEYS[1]:"resource:stock"库存key
 --KEYS[2]:"resource:buyers"已购用户集合key
---RGV[1]:"user"操作用户ID
+--ARGV[1]:"user"操作用户ID
 --取库存
 --local声明为局部变量
 --终端 EVAL “--下面代码” 2 resource:stock:100 resource:buyers:100 user_001
