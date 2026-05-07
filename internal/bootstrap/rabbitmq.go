@@ -54,6 +54,14 @@ func InitRabbitMQ() {
 		"order_exchange",
 		false,
 		nil)
+	returns := ch.NotifyReturn(make(chan amqp.Return, 16))
+
+	go func() {
+		for r := range returns {
+			log.Printf("MQ message returned! exchange=%s key=%s reason=%s body=%s",
+				r.Exchange, r.RoutingKey, r.ReplyText, string(r.Body))
+		}
+	}()
 
 	global.MQChannel = ch
 }

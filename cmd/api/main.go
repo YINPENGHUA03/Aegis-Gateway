@@ -12,6 +12,7 @@ func main() {
 	//Initailize MYSQL and Redis
 	bootstrap.InitMySQL()
 	bootstrap.InitRedis()
+	bootstrap.InitRabbitMQ()
 	// Create a default Gin router.
 	r := bootstrap.SetupRouter()
 	// Log a startup message.
