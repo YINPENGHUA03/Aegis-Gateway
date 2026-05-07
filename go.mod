@@ -9,6 +9,8 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
+require github.com/rabbitmq/amqp091-go v1.11.0 // indirect
+
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
