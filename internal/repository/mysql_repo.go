@@ -85,3 +85,16 @@ func GetOrderByUserAndResource(ctx context.Context, userID string, resourceID in
 
 	return &o, nil
 }
+
+func UpdateOrderStatus(ctx context.Context, userID string, resourceID int64) (int64, error) {
+	result, err := global.DB.ExecContext(
+		ctx,
+		"UPDATE t_order SET status = 2 WHERE user_id = ? AND resource_id = ? AND status = 0",
+		userID,
+		resourceID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}

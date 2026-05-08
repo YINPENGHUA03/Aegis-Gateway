@@ -71,7 +71,7 @@ func RunOrderConsumer() {
 			err = global.MQChannel.PublishWithContext(
 				context.Background(),
 				msg.Exchange,
-				"order_delay", // 发往延迟轨道，等待 TTL 过期后回流
+				"order_retry", // 发往延迟轨道，等待 TTL 过期后回流
 				false,
 				false,
 				amqp.Publishing{
