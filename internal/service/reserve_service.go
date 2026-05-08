@@ -39,7 +39,7 @@ func Reserve(ctx context.Context, userID string, resourceID int64) error {
 			UserID     string `json:"user_id"`
 			ResourceID int64  `json:"resource_id"`
 		}
-		//序列化
+		//序列化，把 Go struct 转成 JSON 字节
 		body, err := json.Marshal(OrderMessage{UserID: userID, ResourceID: resourceID})
 		if err != nil {
 			return fmt.Errorf("marshal: %w", err)
