@@ -34,7 +34,7 @@ func RunOrderConsumer() {
 		//情况一：有毒信息
 		if err := json.Unmarshal(msg.Body, &m); err != nil {
 			log.Printf("bad message:%v", err)
-			msg.Nack(false, false) //丢弃，格式坏
+			msg.Ack(false) //丢弃，格式坏
 			continue
 		}
 
@@ -48,10 +48,7 @@ func RunOrderConsumer() {
 			log.Printf("insert failed : %v", err)
 
 			//  从包裹的面单（Headers）里提取历史重试次数
-			var retryCount int32 = 0
-			if count, ok := msg.Headers["x-retry-count"].(int32); ok {
-				retryCount = count
-			}
+			retryCount := getRetryCount(msg.Headers, "x-retry-count")
 
 			//如果已经重试了3次，彻底放弃
 			if retryCount >= 3 {

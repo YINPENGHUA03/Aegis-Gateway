@@ -12,30 +12,6 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// 提取 Header 中数字的通用安全方法
-func getRetryCount(headers amqp.Table, key string) int32 {
-	if headers == nil {
-		return 0
-	}
-	val, ok := headers[key]
-	if !ok {
-		return 0
-	}
-
-	switch v := val.(type) {
-	case int32:
-		return v
-	case int16:
-		return int32(v)
-	case int64:
-		return int32(v)
-	case int:
-		return int32(v)
-	default:
-		return 0
-	}
-}
-
 func retryDeadLetter(msg amqp.Delivery, reason string) {
 	//  从包裹的面单（Headers）里提取历史重试次数
 	retryCount := getRetryCount(msg.Headers, "x-retry-count")
@@ -105,7 +81,7 @@ func processOneDeadLetter(msg amqp.Delivery) {
 	//1.有毒信息
 	if err := json.Unmarshal(msg.Body, &m); err != nil {
 		log.Printf("bad message: %v", err)
-		msg.Nack(false, false)
+		msg.Ack(false)
 		return
 	}
 
@@ -114,14 +90,12 @@ func processOneDeadLetter(msg amqp.Delivery) {
 	if err != nil {
 		log.Printf("[DEAD] query order failed: %v", err)
 		retryDeadLetter(msg, "query failed")
-		cancel()
 		return
 	}
 
 	//3.订单不存在或已支付->Ack
-	if order == nil || order.Status == 1 || order.Status == 2 {
+	if order != nil && order.Status == 1 {
 		msg.Ack(false)
-		cancel()
 		return
 	}
 
@@ -130,7 +104,6 @@ func processOneDeadLetter(msg amqp.Delivery) {
 	if err != nil {
 		log.Printf("[DEAD] compensate failed: %v", err)
 		retryDeadLetter(msg, "cancel failed")
-		cancel()
 		return
 	}
 
@@ -143,7 +116,6 @@ func processOneDeadLetter(msg amqp.Delivery) {
 	if err != nil {
 		log.Printf("[DEAD] compensate failed: %v", err)
 		retryDeadLetter(msg, "compensate failed")
-		cancel()
 		return
 	}
 	log.Printf("[DEAD] order cancelled: user=%s resource=%d", m.UserID, m.ResourceID)

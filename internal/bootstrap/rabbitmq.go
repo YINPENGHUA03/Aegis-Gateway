@@ -49,7 +49,7 @@ func InitRabbitMQ() {
 		"x-dead-letter-exchange":    "order_exchange",
 		"x-dead-letter-routing-key": "order_normal",
 	}
-	ch.QueueDeclare("order_retry_queue",
+	ch.QueueDeclare("order_normal_retry_queue",
 		true,
 		false,
 		false,
@@ -85,8 +85,8 @@ func InitRabbitMQ() {
 		"order_exchange",
 		false,
 		nil)
-	ch.QueueBind("order_retry_queue",
-		"order_retry",
+	ch.QueueBind("order_normal_retry_queue",
+		"order_normal_retry",
 		"order_exchange",
 		false,
 		nil)
