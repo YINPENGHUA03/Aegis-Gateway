@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log"
 	"strconv"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -93,50 +94,59 @@ func RunDeadLetterConsumer() {
 	}
 
 	for msg := range deliveries {
-		var m OrderMessage
-		//1.有毒信息
-		if err := json.Unmarshal(msg.Body, &m); err != nil {
-			log.Printf("bad message: %v", err)
-			msg.Nack(false, false)
-			continue
-		}
-
-		ctx := context.Background()
-
-		//2.查订单
-		order, err := repository.GetOrderByUserAndResource(ctx, m.UserID, m.ResourceID)
-		if err != nil {
-			log.Printf("[DEAD] query order failed: %v", err)
-			retryDeadLetter(msg, "query failed")
-			continue
-		}
-
-		//3.订单不存在或已支付->Ack
-		if order == nil || order.Status == 1 {
-			msg.Ack(false)
-			continue
-		}
-
-		//4.未支付->取消订单
-		_, err = repository.UpdateOrderStatus(ctx, m.UserID, m.ResourceID)
-		if err != nil {
-			log.Printf("[DEAD] compensate failed: %v", err)
-			retryDeadLetter(msg, "cancel failed")
-			continue
-		}
-
-		//5.补偿Redis(库存+1，移除用户)
-		keys := []string{
-			"resource:stock:" + strconv.FormatInt(m.ResourceID, 10),
-			"resource:buyers:" + strconv.FormatInt(m.ResourceID, 10),
-		}
-		_, err = global.Redis.EvalSha(ctx, global.CompensateSHA, keys, m.UserID).Result()
-		if err != nil {
-			log.Printf("[DEAD] compensate failed: %v", err)
-			retryDeadLetter(msg, "compensate failed")
-			continue
-		}
-		log.Printf("[DEAD] order cancelled: user=%s resource=%d", m.UserID, m.ResourceID)
-		msg.Ack(false)
+		processOneDeadLetter(msg)
 	}
+}
+
+func processOneDeadLetter(msg amqp.Delivery) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel() // ← 任何 return 路径都自动执行
+	var m OrderMessage
+	//1.有毒信息
+	if err := json.Unmarshal(msg.Body, &m); err != nil {
+		log.Printf("bad message: %v", err)
+		msg.Nack(false, false)
+		return
+	}
+
+	//2.查订单
+	order, err := repository.GetOrderByUserAndResource(ctx, m.UserID, m.ResourceID)
+	if err != nil {
+		log.Printf("[DEAD] query order failed: %v", err)
+		retryDeadLetter(msg, "query failed")
+		cancel()
+		return
+	}
+
+	//3.订单不存在或已支付->Ack
+	if order == nil || order.Status == 1 || order.Status == 2 {
+		msg.Ack(false)
+		cancel()
+		return
+	}
+
+	//4.未支付->取消订单
+	_, err = repository.UpdateOrderStatus(ctx, m.UserID, m.ResourceID)
+	if err != nil {
+		log.Printf("[DEAD] compensate failed: %v", err)
+		retryDeadLetter(msg, "cancel failed")
+		cancel()
+		return
+	}
+
+	//5.补偿Redis(库存+1，移除用户)
+	keys := []string{
+		"resource:stock:" + strconv.FormatInt(m.ResourceID, 10),
+		"resource:buyers:" + strconv.FormatInt(m.ResourceID, 10),
+	}
+	_, err = global.Redis.EvalSha(ctx, global.CompensateSHA, keys, m.UserID).Result()
+	if err != nil {
+		log.Printf("[DEAD] compensate failed: %v", err)
+		retryDeadLetter(msg, "compensate failed")
+		cancel()
+		return
+	}
+	log.Printf("[DEAD] order cancelled: user=%s resource=%d", m.UserID, m.ResourceID)
+	msg.Ack(false)
+
 }
