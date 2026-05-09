@@ -30,16 +30,29 @@ func InitRedis() {
 	global.Redis = rdb // Assign to a global variable
 	log.Println(" Redis Client initialisation successful!")
 
-	content, err := os.ReadFile("scripts/lua/reserve.lua")
+	content1, err := os.ReadFile("scripts/lua/reserve.lua")
 	if err != nil {
 		log.Fatalf("Fail to readfile: %v", err)
 	}
-	script := string(content)
+	script1 := string(content1)
 
 	//Redis用SHA1做脚本缓存的key，节省流量和CPU时间
-	sha, err := rdb.ScriptLoad(ctx, script).Result()
+	sha1, err := rdb.ScriptLoad(ctx, script1).Result()
 	if err != nil {
 		log.Fatalf("Script load failed: %v", err)
 	}
-	global.ReserveSHA = sha
+	global.ReserveSHA = sha1
+
+	content2, err := os.ReadFile("scripts/lua/compensate.lua")
+	if err != nil {
+		log.Fatalf("Fail to readfile: %v", err)
+	}
+	script2 := string(content2)
+
+	//Redis用SHA1做脚本缓存的key，节省流量和CPU时间
+	sha2, err := rdb.ScriptLoad(ctx, script2).Result()
+	if err != nil {
+		log.Fatalf("Script load failed: %v", err)
+	}
+	global.CompensateSHA = sha2
 }

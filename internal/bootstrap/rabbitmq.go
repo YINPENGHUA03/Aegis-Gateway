@@ -63,6 +63,18 @@ func InitRabbitMQ() {
 		false,
 		nil)
 
+	deadRetryArgs := amqp.Table{
+		"x-message-ttl":             int32(60 * 1000),
+		"x-dead-letter-exchange":    "order_exchange",
+		"x-dead-letter-routing-key": "order_dead", //回 order_dead_queue
+	}
+	ch.QueueDeclare("order_dead_retry_queue",
+		true,
+		false,
+		false,
+		false,
+		deadRetryArgs)
+
 	ch.QueueBind("order_normal_queue", // 把哪个 Queue
 		"order_normal",   // 用什么 routing key（暗号）
 		"order_exchange", // 绑到哪个 Exchange
@@ -80,6 +92,11 @@ func InitRabbitMQ() {
 		nil)
 	ch.QueueBind("order_dead_queue",
 		"order_dead",
+		"order_exchange",
+		false,
+		nil)
+	ch.QueueBind("order_dead_retry_queue",
+		"order_dead_retry",
 		"order_exchange",
 		false,
 		nil)

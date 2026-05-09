@@ -17,6 +17,7 @@ func main() {
 
 	// 启动正常订单消费者（常驻 goroutine）
 	go consumer.RunOrderConsumer()
+	go consumer.RunDeadLetterConsumer()
 
 	// Create a default Gin router.
 	r := bootstrap.SetupRouter()
