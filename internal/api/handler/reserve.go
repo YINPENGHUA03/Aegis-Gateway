@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
+
+	"aegis-gateway/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,18 +33,17 @@ func HandleReserve(c *gin.Context) {
 		return
 	}
 
-	// ==========================================
-	// TODO (Day 4-10):
-	// 1. IP 频率限流
-	// 2. 获取 Redis 分布式实名锁 (防重穿透)
-	// 3. 执行 Lua 脚本进行内存极速扣减
-	// 4. 将扣减成功的消息推入 RabbitMQ
-	// ==========================================
+	//hander接service
+	err := service.Reserve(c.Request.Context(), req.UserID, req.ResourceID)
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 200,
-		"msg": `The gateway contract validation has been passed;
-		       the request has entered the processing queue.`,
-		"data": req,
-	})
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, gin.H{"code": 200, "msg": "queued"})
+	case errors.Is(err, service.ErrSoldOut):
+		c.JSON(http.StatusGone, gin.H{"code": 410, "msg": "sold out"})
+	case errors.Is(err, service.ErrAlreadyReserved):
+		c.JSON(http.StatusConflict, gin.H{"code": 409, "error": "already reserved"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "error": "Internal server error, please try again later"})
+	}
 }
