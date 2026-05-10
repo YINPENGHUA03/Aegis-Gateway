@@ -93,7 +93,7 @@ func processOneDeadLetter(msg amqp.Delivery) {
 		return
 	}
 
-	//3.订单不存在或已支付->Ack
+	//3."订单不存在或已支付" → "已支付"    order == nil情况:"不拦截 = 让它继续走"
 	if order != nil && order.Status == 1 {
 		msg.Ack(false)
 		return

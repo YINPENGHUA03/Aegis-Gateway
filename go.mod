@@ -3,13 +3,13 @@ module aegis-gateway
 go 1.26.1
 
 require (
+	github.com/gin-contrib/pprof v1.5.4
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
+	github.com/rabbitmq/amqp091-go v1.11.0
 	github.com/redis/go-redis/v9 v9.18.0
 )
-
-require github.com/rabbitmq/amqp091-go v1.11.0 // indirect
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
