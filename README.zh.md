@@ -1,0 +1,215 @@
+# Aegis Gateway (磐石网关)
+
+[English](README.md) | [简体中文](README.zh.md)
+
+>高并发稀缺资源预约系统: Redis Lua + RabbitMQ死信队列 + 柔性事务补偿， 单机50K QPS
+
+[![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8)]() 
+[![Redis](https://img.shields.io/badge/Redis-7.0-DC382D)]()
+[![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3.12-FF6600)]()
+
+---
+
+## 项目背景
+
+解决稀缺资源抢购预约，比如九价疫苗，稀缺矿物等的稀缺资源抢购场景下的超卖防护、用户重复提交防御、未支付订单的自动取消。
+
+---
+
+## 系统架构
+
+```mermaid
+graph TD
+    Client([Client]) -->|"POST /reserve"| IP
+
+    subgraph Aegis["Aegis Gateway"]
+        direction TB
+        IP["IP 限流"] --> AntiSpam["AntiSpam (用户实名锁)"]
+        AntiSpam --> Lua["Lua 原子扣减 (Redis)"]
+        Lua --> Publish["Publish (RabbitMQ)"]
+        
+        Publish --> NormalQ("order_normal_queue")
+        Publish --> DelayQ("order_delay_queue")
+    end
+
+    NormalQ --> Consumer1["Order Consumer<br/>INSERT t_order"]
+    DelayQ --> Consumer2["Dead Letter Consumer<br/>查支付 → 取消 + 补偿"]
+
+    %% 样式美化 
+    classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#333333;
+    classDef queue fill:#e1f5fe,stroke:#0288d1,stroke-width:1px,color:#333333;
+    classDef consumer fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px,color:#333333;
+    
+    class Client client;
+    class NormalQ,DelayQ queue;
+    class Consumer1,Consumer2 consumer;
+```
+
+---
+
+## 核心技术
+
+### 1. 防超卖：Redis Lua原子扣减
+- 单条lua在 Redis 单线程中原子执行 GET / SISMEMBER / DECR / SADD
+- 200并发压测中，1 库存 200 请求，恰好 1 成功
+- 启动时用 ScriptLoad 缓存 SHA 1，请求复用 EvalSha 减少网络传输
+
+### 2. 防重复：分布式实名锁 (5s TTL + 看门狗续期)
+- uuid + SETNX 加锁
+- Watchdog goroutine 每 TTL/3 用 Lua check-and-PEXPIRE续期
+- Unlock 用 Lua check-and-DEL 防止误删其他用户的锁
+
+### 3. 柔性事务：RabbitMQ 双队列 + 死信补偿
+- 抢购成功的信息同时进 normal queue (立即下单) 和 delay queue (15分钟 TTL)
+- delay queue 到期 ——> 死信至 dead queue ——> 检查支付状态 ——> 未付则 UPDATE t_order + 补偿Redis库存
+- compensate.lua 抗重复执行 (内置幂等门 SISMEMBER)
+
+### 4. 重试机制：独立双延迟队列 + Header 计数器重试
+- DB抖动时信息进入 retry queue, normal queue的信息进入 normal retry queue, dead queue的信息进入 dead retry queue。 (1分钟 TTL)回流原队列
+- Headers["x-retry-count"] 累加，超 3 次进入人工干预日志
+
+---
+
+## 性能数据
+
+8 线程 / 200 并发 / 30 秒压测（单机 WSL2 + 本地 Redis）
+
+### A 组：HTTP 层吞吐极限（不触发 Lua / Redis）
+
+| 阶段 | 优化点 | QPS | 平均延迟 |
+|------|--------|-----|---------|
+| 基线 | `gin.Default()` debug 模式 | 25,130 | 75ms |
+| 释放日志开销 | `gin.SetMode(Release)` + `gin.New()` + Recovery | **429,586** | **844µs** |
+
+> 此组测试中请求被前置中间件快速 reject，反映纯 HTTP 框架性能上限。
+
+### B 组：端到端业务吞吐（完整调用 Redis Lua）
+
+| 指标 | 数值 |
+|------|------|
+| QPS | **50,365** |
+| 平均延迟 | 4.23ms |
+| 延迟 stddev | 5.45ms |
+| 瓶颈定位 | go-redis EvalSha 网络 RTT（火焰图证据） |
+
+> 此组测试调用完整的 Reserve → EvalSha → Lua 链路，4.23ms 中约 4ms 为 Redis 网络往返。
+
+---
+
+## 火焰图分析
+
+### 图 1：基线
+![基线火焰图](flame_baseline.png)
+
+---
+
+
+优化前火焰图：gin.LoggerWithConfig → fmt.Fprint → syscall.Write 占用大量 CPU，每条请求一次 stderr 写入是隐藏瓶颈。
+
+---
+### 图 2：最终
+![优化后火焰图](flame_optimized.png)
+
+---
+
+
+优化后火焰图：业务主链清晰可见 service.Reserve → go-redis.EvalSha → runtime.netpoll，瓶颈完全转移到 Redis 网络 I/O，业务代码零冗余热点。
+
+---
+### 图 3：系统健康度
+![Goroutine profile](goroutine_profile.png)
+
+---
+
+
+Goroutine profile 显示 200 并发下 390 个 goroutine 全部健康——仅在 HTTP 接收和 Redis 读取处阻塞，无 Mutex 竞争、无 GC 卡顿、无 I/O 堆积。
+
+
+---
+
+## 项目结构
+
+```text
+aegis-gateway/
+├── cmd/
+│   └── api/
+│       └── main.go                      # 程序入口，初始化各组件并启动 HTTP 服务
+├── internal/
+│   ├── api/
+│   │   ├── handler/
+│   │   │   └── reserve.go               # 解析请求、参数校验、调 service
+│   │   └── middleware/
+│   │       ├── ratelimit.go             # IP 令牌桶限流（golang.org/x/time/rate）
+│   │       └── anti_spam.go             # 用户实名分布式锁防重
+│   ├── bootstrap/
+│   │   ├── db.go                        # 初始化 MySQL 连接池
+│   │   ├── redis.go                     # 初始化 Redis + 预加载 Lua 脚本（ScriptLoad）
+│   │   ├── rabbitmq.go                  # 声明交换机、队列、绑定规则
+│   │   └── router.go                    # 注册 Gin 路由和中间件，读 APP_MODE 切换限流强度
+│   ├── consumer/
+│   │   ├── order_consumer.go            # 正常订单消费者：监听 order_normal_queue，InsertOrder
+│   │   ├── dead_letter_consumer.go      # 死信消费者：超时未支付 → 取消订单 + 补偿 Redis
+│   │   └── helper.go                    # 公共辅助：getRetryCount（AMQP Header 类型断言）
+│   ├── global/
+│   │   └── global.go                    # 全局单例（DB、Redis、ReserveSHA、CompensateSHA、MQChannel）
+│   ├── repository/
+│   │   ├── mysql_repo.go                # InsertOrder / GetOrderByUserAndResource / UpdateOrderStatus
+│   │   └── redis_repo.go                # Redis 操作封装
+│   └── service/
+│       ├── reserve_service.go           # 核心业务：EvalSha Lua + 投递 MQ 双消息
+│       └── reserve_service_test.go      # 并发压测单测：200 goroutine 争 1 库存
+├── pkg/
+│   └── distributed_lock/
+│       ├── lock.go                      # 分布式锁：SETNX+TTL 加锁、Lua 原子解锁、看门狗续期
+│       └── lock_test.go                 # 锁的单元测试
+├── scripts/
+│   ├── lua/
+│   │   ├── reserve.lua                  # 原子库存扣减：库存检查 → SISMEMBER → DECR + SADD
+│   │   └── compensate.lua               # 幂等补偿：SISMEMBER 守门 → INCR + SREM
+│   ├── wrk.sh                           # 生成 wrk 压测 Lua 脚本到 /tmp/reserve.lua
+│   └── test_day3.sh                     # Day 3 接口冒烟测试脚本
+├── go.mod
+├── go.sum
+├── docker-compose.yml                   # 一键拉起 MySQL(3309) + Redis + RabbitMQ
+└── LICENSE
+```
+
+---
+
+## 快速开始
+
+```bash
+# 1. 启动依赖
+docker compose up -d
+```
+
+```bash
+# 2. 建表
+docker exec -it appoint_mysql mysql -uroot -p0410 appoint_db < scripts/init.sql
+```
+
+```bash
+# 3. 启动服务
+go run cmd/api/main.go
+```
+
+```bash
+# 4. 压测
+APP_MODE=loadtest go run cmd/api/main.go    # 摘掉限流
+bash scripts/wrk.sh
+wrk -t8 -c200 -d30s -s /tmp/reserve.lua http://localhost:8080/api/v1/reserve
+```
+
+## 进一步优化方向
+
+- [ ] Redis pipeline 批处理（预期 QPS +50%）
+- [ ] 本地内存预扣减 + Redis 异步同步（预期 5-10x）
+- [ ] Graceful shutdown（SIGTERM 等消费者处理完手头消息）
+- [ ] 死信表持久化（运维可追溯）
+- [ ] 统一 response 包封装
+
+---
+
+## 技术栈
+
+Go 1.26 / Gin / go-redis v9 / amqp091-go / Lua / Docker Compose

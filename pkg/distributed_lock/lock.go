@@ -23,7 +23,6 @@ type RedisLock struct {
 
 // New 构造一把新锁。仅分配内存，不会真的去 Redis 加锁。
 // 调用方需要随后调用 Lock() 才会触发 SETNX。
-//
 // 参数:
 //
 //	client: 复用的 Redis 客户端实例（来自 global.Redis）
