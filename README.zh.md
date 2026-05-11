@@ -237,11 +237,11 @@ wrk -t8 -c200 -d30s -s /tmp/reserve.lua http://localhost:8080/api/v1/reserve
 
 ## 进一步优化方向
 
+- [x] Graceful shutdown（SIGTERM 等消费者处理完手头消息）
+- [ ] 云端部署（Docker Compose on VPS，公网可访问）
 - [ ] Redis pipeline 批处理（预期 QPS +50%）
 - [ ] 本地内存预扣减 + Redis 异步同步（预期 5-10x）
-- [x] Graceful shutdown（SIGTERM 等消费者处理完手头消息）
 - [ ] 死信表持久化（运维可追溯）
-- [ ] 统一 response 包封装
 
 ---
 

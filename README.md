@@ -236,11 +236,11 @@ wrk -t8 -c200 -d30s -s /tmp/reserve.lua http://localhost:8080/api/v1/reserve
 
 ## Roadmap
 
+- [x] Graceful shutdown (SIGTERM waits for in-flight consumer work)
+- [ ] Cloud deployment (Docker Compose on VPS, publicly accessible)
 - [ ] Redis pipeline batching (expected +50% QPS)
 - [ ] Local in-memory pre-deduction + async Redis sync (expected 5-10x)
-- [x] Graceful shutdown (SIGTERM waits for in-flight consumer work)
 - [ ] Dead letter table persistence (audit trail for operations)
-- [ ] Unified response wrapper package
 
 ---
 
