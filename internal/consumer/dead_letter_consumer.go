@@ -55,7 +55,7 @@ func retryDeadLetter(msg amqp.Delivery, reason string) {
 	msg.Ack(false)
 }
 
-func RunDeadLetterConsumer() {
+func RunDeadLetterConsumer(ctx context.Context) {
 	deliveries, err := global.MQChannel.Consume(
 		"order_dead_queue",
 		"",    //consumer 标签，空=自动生成
@@ -69,8 +69,17 @@ func RunDeadLetterConsumer() {
 		log.Fatalf("Dead letter consume failed: %v", err)
 	}
 
-	for msg := range deliveries {
-		processOneDeadLetter(msg)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("DeadLetter consumer exiting...")
+			return
+		case msg, ok := <-deliveries:
+			if !ok {
+				return
+			}
+			processOneDeadLetter(msg)
+		}
 	}
 }
 
