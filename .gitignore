@@ -6,6 +6,20 @@ bin/
 *.so
 *.dylib
 
+# Go compiled binaries
+aegis-gateway
+main
+/cmd/api/api
+
+# Go test / profile output
+*.test
+*.out
+*.cover
+coverage.html
+*.pprof
+cpu.prof
+mem.prof
+
 # Dependencies and Logs
 vendor/
 *.log
@@ -20,3 +34,13 @@ dist/
 
 # Environment Configuration
 .env
+.env.*
+*.local
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+*.tmp
