@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-> High-concurrency scarce-resource reservation system: Redis Lua + RabbitMQ dead letter queue + soft transaction compensation. 50K QPS on a single host.
+> High-concurrency scarce-resource reservation system: Redis Lua + RabbitMQ dead letter queue + **reliable-message eventual consistency**. 50K QPS on a single host.
 
 [![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8)]()
 [![Redis](https://img.shields.io/badge/Redis-7.0-DC382D)]()
@@ -60,7 +60,9 @@ graph TD
 - A `Watchdog` goroutine renews the TTL every `TTL/3` via a Lua `check-and-PEXPIRE`
 - `Unlock` uses a Lua `check-and-DEL` so a slow process can never erase another holder's lock
 
-### 3. Soft Transaction: RabbitMQ Dual-Queue + Dead Letter Compensation
+### 3. Reliable-Message Eventual Consistency: RabbitMQ Dual-Queue + Dead Letter Compensation
+
+> Distinct from TCC / Saga patterns. This is the canonical "reliable message" approach: a message is durably persisted in RabbitMQ, and the dead-letter consumer guarantees the system will eventually reconcile DB and Redis state even if individual steps fail or restart.
 
 - On successful reserve, the message is fan-published to both `order_normal_queue` (immediate `INSERT t_order`) and `order_delay_queue` (15-min TTL)
 - When the delay queue's TTL fires, the message dead-letters to `order_dead_queue` → consumer queries payment status → if still unpaid, marks the order cancelled and triggers Redis compensation
@@ -76,7 +78,10 @@ graph TD
 
 ## Performance
 
-8 threads / 200 connections / 30-second load test (single-host WSL2 + local Redis)
+### Test Environment
+WSL2 (Ubuntu) + Redis/MySQL/RabbitMQ Docker single-machine deployment. 
+`ulimit -n 65535`, Redis not persisted (AOF off), RabbitMQ delivery_mode=2 (persistent messages).
+8 threads / 200 connections / 30-second load test 
 
 ### Group A: HTTP Layer Ceiling (no Lua / Redis hit)
 
@@ -123,6 +128,34 @@ After optimization: the business chain `service.Reserve` → `go-redis.EvalSha` 
 ![goroutine profile](goroutine_profile.png)
 
 The goroutine profile shows all 390 goroutines healthy under 200 concurrency — blocked only on HTTP read and Redis I/O. No mutex contention, no GC pauses, no I/O backlog.
+
+---
+
+## Data Schema
+
+The MySQL side stores only the order record. Redis owns the hot path (stock counter + buyer set).
+
+```sql
+CREATE TABLE t_order (
+    order_no    VARCHAR(64)  PRIMARY KEY COMMENT 'UUID v4 with ORD- prefix',
+    user_id     VARCHAR(32)  NOT NULL,
+    resource_id BIGINT       NOT NULL,
+    status      TINYINT      NOT NULL DEFAULT 0
+                COMMENT '0=pending  1=paid  2=cancelled',
+    created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
+                                       ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY  uk_user_resource (user_id, resource_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+```
+
+**Design trade-offs:**
+
+- **PK = VARCHAR(order_no)**: UUID is distributed-friendly (no coordinator), but random inserts cause B+Tree page splits. Acceptable here; switch to Snowflake if write throughput becomes the bottleneck.
+- **`UNIQUE KEY` on `(user_id, resource_id)`** — *defense in depth*: Redis `SISMEMBER` is the first line of defense (O(1), fast path). But Redis can lose in-memory state on restart or failover, so MySQL's UNIQUE constraint serves as the **last-resort backstop** — even if Redis is compromised, duplicate orders are still rejected at the DB layer.
+- **`DATETIME` instead of `TIMESTAMP`**: TIMESTAMP overflows at 2038-01-19 (32-bit). DATETIME covers up to year 9999 at a 3-byte overhead — trivial compared to the data and indexes.
+
+Full schema in [`scripts/init.sql`](scripts/init.sql).
 
 ---
 

@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
->高并发稀缺资源预约系统: Redis Lua + RabbitMQ死信队列 + 柔性事务补偿， 单机50K QPS
+> 高并发稀缺资源预约系统: Redis Lua + RabbitMQ 死信队列 + **可靠消息最终一致性**，单机 50K QPS
 
 [![Go Version](https://img.shields.io/badge/Go-1.26-00ADD8)]() 
 [![Redis](https://img.shields.io/badge/Redis-7.0-DC382D)]()
@@ -59,7 +59,10 @@ graph TD
 - Watchdog goroutine 每 TTL/3 用 Lua check-and-PEXPIRE续期
 - Unlock 用 Lua check-and-DEL 防止误删其他用户的锁
 
-### 3. 柔性事务：RabbitMQ 双队列 + 死信补偿
+### 3. 可靠消息最终一致性：RabbitMQ 双队列 + 死信补偿
+
+> 区别于 TCC / Saga：本方案属于经典的"可靠消息最终一致性"——消息在 RabbitMQ 持久化，死信消费者保证即使单步失败或重启，DB 和 Redis 状态最终都会被对齐。
+
 - 抢购成功的信息同时进 normal queue (立即下单) 和 delay queue (15分钟 TTL)
 - delay queue 到期 ——> 死信至 dead queue ——> 检查支付状态 ——> 未付则 UPDATE t_order + 补偿Redis库存
 - compensate.lua 抗重复执行 (内置幂等门 SISMEMBER)
@@ -72,7 +75,11 @@ graph TD
 
 ## 性能数据
 
-8 线程 / 200 并发 / 30 秒压测（单机 WSL2 + 本地 Redis）
+### 测试环境
+
+WSL2 (Ubuntu) + Redis/MySQL/RabbitMQ Docker 单机部署。
+`ulimit -n 65535`，Redis 未做持久化（AOF off），RabbitMQ delivery_mode=2（持久化消息）。
+8 线程 / 200 并发 / 30 秒压测
 
 ### A 组：HTTP 层吞吐极限（不触发 Lua / Redis）
 
@@ -124,6 +131,34 @@ graph TD
 
 Goroutine profile 显示 200 并发下 390 个 goroutine 全部健康——仅在 HTTP 接收和 Redis 读取处阻塞，无 Mutex 竞争、无 GC 卡顿、无 I/O 堆积。
 
+
+---
+
+## 数据表结构
+
+MySQL 侧只存订单记录，热点路径（库存计数 + 买家集合）全部在 Redis 上。
+
+```sql
+CREATE TABLE t_order (
+    order_no    VARCHAR(64)  PRIMARY KEY COMMENT 'UUID v4，带 ORD- 前缀',
+    user_id     VARCHAR(32)  NOT NULL,
+    resource_id BIGINT       NOT NULL,
+    status      TINYINT      NOT NULL DEFAULT 0
+                COMMENT '0=待支付  1=已支付  2=已取消',
+    created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
+                                       ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY  uk_user_resource (user_id, resource_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+```
+
+**设计取舍：**
+
+- **主键用 VARCHAR(order_no)**：UUID 分布式生成无需协调，但随机插入会让 InnoDB B+Tree 频繁页分裂。当前可接受；若写吞吐成瓶颈再换 Snowflake。
+- **`(user_id, resource_id)` 用 UNIQUE KEY** — *纵深防御*：Redis `SISMEMBER` 是第一道防线（O(1)，性能优先）。但 Redis 重启 / 主从切换可能丢失内存数据，MySQL 的 UNIQUE 约束作为**兜底防线**——即使 Redis 失守，DB 层也能拒绝重复订单插入。
+- **时间字段用 DATETIME**：TIMESTAMP 2038 年溢出（32 位整数）。DATETIME 范围到 9999 年，多占 3 字节相对数据和索引可忽略。
+
+完整 schema 见 [`scripts/init.sql`](scripts/init.sql)。
 
 ---
 
