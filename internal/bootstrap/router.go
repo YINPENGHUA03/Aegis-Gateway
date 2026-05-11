@@ -14,7 +14,8 @@ import (
 // SetupRouter Configure and return a configured Gin engine
 func SetupRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
-	r := gin.New() // ← 不要用 Default()
+	r := gin.New()           // ← 不要用 Default()
+	r.SetTrustedProxies(nil) // 不读 X-Forwarded-For，直接用 TCP IP
 	r.Use(gin.Recovery())
 	pprof.Register(r)
 
