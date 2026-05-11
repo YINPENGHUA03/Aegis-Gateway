@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS t_order (
 
     PRIMARY KEY (order_no),
     UNIQUE KEY  uk_user_resource (user_id, resource_id)
-                COMMENT '纵深防御：DB 层兜底防重，Redis SISMEMBER 失守时也能拒绝重复订单'
+                COMMENT 'DB 层兜底防重，Redis SISMEMBER 失守时也能拒绝重复订单'
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci
