@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 配置Redis
   redis:
@@ -10,6 +8,11 @@ services:
   # AOF 持久化
     command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}"
     restart: always
+    healthcheck:
+      test: ["CMD","redis-cli","-a","${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # 配置RabbitMQ (带可视化控制台版本)
   rabbitmq:
@@ -21,7 +24,7 @@ services:
       - "15672:15672" # 浏览器可视化控制台端口 
     environment:
       RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER}"
-      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_DATABASE}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASS}"
     restart: always
 
   # 配置MySQL
@@ -38,6 +41,27 @@ services:
     # 解决高并发下的时区和连接问题
     command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-time-zone='+08:00'
     restart: always
+    healthcheck:
+      test: ["CMD","mysqladmin","ping","-h","localhost","-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  aegis-gateway:
+    build: .
+    container_name: aegis_gateway
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    depends_on:
+      mysql:
+         condition: service_healthy
+      redis:
+          condition: service_healthy
+      rabbitmq:
+          condition: service_started
+    restart: on-failure
 
 volumes:
-  mysql_data:
+  mysql_data: # 向 Docker 申请一块名叫 mysql_data 的移动硬盘

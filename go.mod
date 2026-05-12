@@ -11,7 +11,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 )
 
-require github.com/joho/godotenv v1.5.1 // indirect
+require github.com/joho/godotenv v1.5.1
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
