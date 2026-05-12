@@ -35,6 +35,7 @@ dist/
 # Environment Configuration
 .env
 .env.*
+!.env.example
 *.local
 
 # OS junk

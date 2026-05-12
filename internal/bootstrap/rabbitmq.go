@@ -2,14 +2,22 @@ package bootstrap
 
 import (
 	"aegis-gateway/internal/global"
+	"fmt"
 	"log"
+	"os"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func InitRabbitMQ() {
 	//连接
-	conn, err := amqp.Dial("amqp://Dev1atE:yph@666@127.0.0.1:5672/")
+	url := fmt.Sprintf(("amqp://%s:%s@%s/"),
+		os.Getenv("RABBITMQ_USER"),
+		os.Getenv("RABBITMQ_PASS"),
+		os.Getenv("RABBITMQ_ADDR"),
+	)
+
+	conn, err := amqp.Dial(url)
 	if err != nil {
 		log.Fatalf("Connection failed: %v", err)
 	}

@@ -2,7 +2,9 @@ package bootstrap
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"aegis-gateway/internal/global"
@@ -11,7 +13,9 @@ import (
 )
 
 func InitMySQL() {
-	dsn := "root:0410@tcp(127.0.0.1:3309)/appoint_db?charset=utf8mb4&parseTime=True&loc=Local"
+	dsn := fmt.Sprintf("root:%s@tcp(%s)/appoint_db?charset=utf8mb4&parseTime=True&loc=Local",
+		os.Getenv("MYSQL_ROOT_PASSWORD"),
+		os.Getenv("MYSQL_ADDR"))
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
