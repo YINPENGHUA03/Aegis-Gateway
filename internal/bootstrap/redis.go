@@ -13,7 +13,7 @@ import (
 
 func InitRedis() {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:         "REDIS_ADDR",
+		Addr:         os.Getenv("REDIS_ADDR"),
 		Password:     os.Getenv("REDIS_PASSWORD"),
 		DB:           0,
 		PoolSize:     200,

@@ -13,9 +13,12 @@ import (
 	"aegis-gateway/internal/bootstrap"
 	"aegis-gateway/internal/consumer"
 	"aegis-gateway/internal/global"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	_ = godotenv.Load()
 	log.Println("Initalizing...")
 
 	//Initailize MYSQL and Redis
