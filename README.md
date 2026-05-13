@@ -202,7 +202,9 @@ aegis-gateway/
 │   └── test_day3.sh                     # Day 3 smoke test script
 ├── go.mod
 ├── go.sum
-├── docker-compose.yml                   # One-shot setup: MySQL(3309) + Redis + RabbitMQ
+├── docker-compose.yml                   # One-shot setup: MySQL + Redis + RabbitMQ + aegis-gateway
+├── Dockerfile                           # Multi-stage build: golang:1.26-alpine → alpine:3.19
+├── .env.example                         # Credential template (copy to .env and fill in)
 └── LICENSE
 ```
 
@@ -210,23 +212,38 @@ aegis-gateway/
 
 ## Quick Start
 
+### Option A — Docker (recommended)
+
 ```bash
 # 1. Configure credentials
-cp .env.example .env   # fill in passwords
-```
+cp .env.example .env        # fill in passwords
 
-```bash
-# 2. Start everything (MySQL + Redis + RabbitMQ + aegis-gateway)
+# 2. Start everything
 docker compose up --build -d
-```
 
-```bash
 # 3. Create schema
 docker exec -it appoint_mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" appoint_db < scripts/init.sql
 ```
 
+### Option B — Local (for development)
+
 ```bash
-# 4. Load test
+# 1. Configure credentials
+cp .env.example .env        # set REDIS_ADDR=127.0.0.1:6379, MYSQL_ADDR=127.0.0.1:3309, etc.
+
+# 2. Start dependencies only
+docker compose up -d mysql redis rabbitmq
+
+# 3. Create schema
+docker exec -it appoint_mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" appoint_db < scripts/init.sql
+
+# 4. Run the service
+go run cmd/api/main.go
+```
+
+### Load Test
+
+```bash
 APP_MODE=loadtest go run cmd/api/main.go    # disables anti-spam middleware
 bash scripts/wrk.sh
 wrk -t8 -c200 -d30s -s /tmp/reserve.lua http://localhost:8080/api/v1/reserve

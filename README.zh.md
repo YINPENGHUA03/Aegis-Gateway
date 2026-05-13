@@ -205,7 +205,9 @@ aegis-gateway/
 │   └── test_day3.sh                     # Day 3 接口冒烟测试脚本
 ├── go.mod
 ├── go.sum
-├── docker-compose.yml                   # 一键拉起 MySQL(3309) + Redis + RabbitMQ
+├── docker-compose.yml                   # 一键拉起 MySQL + Redis + RabbitMQ + aegis-gateway
+├── Dockerfile                           # 多阶段构建：golang:1.26-alpine → alpine:3.19
+├── .env.example                         # 凭据模板（复制为 .env 后填入密码）
 └── LICENSE
 ```
 
@@ -213,23 +215,38 @@ aegis-gateway/
 
 ## 快速开始
 
+### 方式 A — Docker（推荐）
+
 ```bash
 # 1. 配置凭据
-cp .env.example .env   # 填入密码
-```
+cp .env.example .env        # 填入密码
 
-```bash
-# 2. 一键启动所有服务（MySQL + Redis + RabbitMQ + aegis-gateway）
+# 2. 一键启动所有服务
 docker compose up --build -d
-```
 
-```bash
 # 3. 建表
 docker exec -it appoint_mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" appoint_db < scripts/init.sql
 ```
 
+### 方式 B — 本地运行（开发调试）
+
 ```bash
-# 4. 压测
+# 1. 配置凭据
+cp .env.example .env        # REDIS_ADDR=127.0.0.1:6379, MYSQL_ADDR=127.0.0.1:3309 等
+
+# 2. 只启动依赖
+docker compose up -d mysql redis rabbitmq
+
+# 3. 建表
+docker exec -it appoint_mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" appoint_db < scripts/init.sql
+
+# 4. 启动服务
+go run cmd/api/main.go
+```
+
+### 压测
+
+```bash
 APP_MODE=loadtest go run cmd/api/main.go    # 摘掉限流
 bash scripts/wrk.sh
 wrk -t8 -c200 -d30s -s /tmp/reserve.lua http://localhost:8080/api/v1/reserve
