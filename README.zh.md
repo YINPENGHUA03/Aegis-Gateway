@@ -214,18 +214,18 @@ aegis-gateway/
 ## 快速开始
 
 ```bash
-# 1. 启动依赖
-docker compose up -d
+# 1. 配置凭据
+cp .env.example .env   # 填入密码
 ```
 
 ```bash
-# 2. 建表
-docker exec -it appoint_mysql mysql -uroot -p0410 appoint_db < scripts/init.sql
+# 2. 一键启动所有服务（MySQL + Redis + RabbitMQ + aegis-gateway）
+docker compose up --build -d
 ```
 
 ```bash
-# 3. 启动服务
-go run cmd/api/main.go
+# 3. 建表
+docker exec -it appoint_mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" appoint_db < scripts/init.sql
 ```
 
 ```bash

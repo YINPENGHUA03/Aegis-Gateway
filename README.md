@@ -211,18 +211,18 @@ aegis-gateway/
 ## Quick Start
 
 ```bash
-# 1. Start dependencies
-docker compose up -d
+# 1. Configure credentials
+cp .env.example .env   # fill in passwords
 ```
 
 ```bash
-# 2. Create schema
-docker exec -it appoint_mysql mysql -uroot -p0410 appoint_db < scripts/init.sql
+# 2. Start everything (MySQL + Redis + RabbitMQ + aegis-gateway)
+docker compose up --build -d
 ```
 
 ```bash
-# 3. Start the service
-go run cmd/api/main.go
+# 3. Create schema
+docker exec -it appoint_mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" appoint_db < scripts/init.sql
 ```
 
 ```bash
