@@ -9,12 +9,13 @@ import (
 	"strconv"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 )
 
 var ErrSoldOut = errors.New("sold out")
 var ErrAlreadyReserved = errors.New("already reserved")
 
-func Reserve(ctx context.Context, userID string, resourceID int64) error {
+func Reserve(ctx context.Context, rdb *redis.Client, ch *amqp.Channel, userID string, resourceID int64) error {
 	// strconv.FormatInt把 int64 类型转换成字符串。
 	key1 := "resource:stock:" + strconv.FormatInt(resourceID, 10)
 	key2 := "resource:buyers:" + strconv.FormatInt(resourceID, 10)

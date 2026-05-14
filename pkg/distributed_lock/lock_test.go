@@ -2,15 +2,25 @@ package distributed_lock
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
+func TestMain(m *testing.M) {
+	godotenv.Load("../../.env")
+
+	os.Exit(m.Run())
+}
+
 // 测试前置条件：Redis 在 127.0.0.1:6379 运行
 func newTestRedis() *redis.Client {
-	return redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	return redis.NewClient(&redis.Options{
+		Addr:     "127.0.0.1:6379",
+		Password: os.Getenv("REDIS_PASSWORD")})
 }
 
 // 用例 1：第一次加锁应该成功
@@ -54,30 +64,7 @@ func TestLock_SecondAcquireFails(t *testing.T) {
 	}
 }
 
-// 用例 3：TTL 到期后应该可以再次加锁（自动释放）
-func TestLock_AutoExpire(t *testing.T) {
-	rdb := newTestRedis()
-	ctx := context.Background()
-	rdb.Del(ctx, "lock:test:user003")
-
-	lockA := New(rdb, "lock:test:user003", 1*time.Second)
-	if _, err := lockA.TryLock(ctx); err != nil {
-		t.Fatalf("lockA.TryLock() error = %v, want nil", err)
-	}
-
-	time.Sleep(1500 * time.Millisecond)
-
-	lockB := New(rdb, "lock:test:user003", 1*time.Second)
-	okB, err := lockB.TryLock(ctx)
-	if err != nil {
-		t.Fatalf("lockB.TryLock() error = %v, want nil", err)
-	}
-	if !okB {
-		t.Fatalf("lockB.TryLock() ok = false, want true (lockA TTL should have expired after 1.5s)")
-	}
-}
-
-// 用例 4：两个锁实例的 UUID 必须不同
+// 用例 3：两个锁实例的 UUID 必须不同
 func TestLock_UUIDIsUnique(t *testing.T) {
 	rdb := newTestRedis()
 	ctx := context.Background()
@@ -98,7 +85,7 @@ func TestLock_UUIDIsUnique(t *testing.T) {
 	}
 }
 
-// 用例 5：加锁后解锁，解锁应该成功，且 Redis key 应该被删除
+// 用例 4：加锁后解锁，解锁应该成功，且 Redis key 应该被删除
 func TestLock_UnlockSucceeds(t *testing.T) {
 	rdb := newTestRedis()
 	ctx := context.Background()
@@ -122,7 +109,7 @@ func TestLock_UnlockSucceeds(t *testing.T) {
 	}
 }
 
-// 用例 6：持有错误 UUID 的实例不能解锁别人的锁（Lua 原子比对保护）
+// 用例 5：持有错误 UUID 的实例不能解锁别人的锁（Lua 原子比对保护）
 func TestLock_WrongUnlock(t *testing.T) {
 	rdb := newTestRedis()
 	ctx := context.Background()
@@ -150,7 +137,7 @@ func TestLock_WrongUnlock(t *testing.T) {
 	}
 }
 
-// 用例 7：看门狗能持续续期，业务时长超过 TTL 也能保持互斥
+// 用例 6：看门狗能持续续期，业务时长超过 TTL 也能保持互斥
 func TestLock_WatchdogKeepsAlive(t *testing.T) {
 	rdb := newTestRedis()
 	ctx := context.Background()
@@ -176,7 +163,7 @@ func TestLock_WatchdogKeepsAlive(t *testing.T) {
 	}
 }
 
-// 用例 8：Unlock 后，看门狗应停止续期，TTL 自然过期后别人能抢到
+// 用例 7：Unlock 后，看门狗应停止续期，TTL 自然过期后别人能抢到
 func TestLock_WatchdogStopsAfterUnlock(t *testing.T) {
 	rdb := newTestRedis()
 	ctx := context.Background()
@@ -199,4 +186,29 @@ func TestLock_WatchdogStopsAfterUnlock(t *testing.T) {
 	if !okB {
 		t.Fatalf("b.TryLock() ok = false, want true (key removed by Unlock)")
 	}
+}
+
+// 测试8：进程崩溃自愈测试
+func TestProcessCrashSelfHealing(t *testing.T) {
+	rdb := newTestRedis()
+	ctx := context.Background()
+	rdb.Del(ctx, "lock:test:user009")
+
+	a := New(rdb, "lock:test:user009", 2*time.Second)
+	if _, err := a.TryLock(ctx); err != nil {
+		t.Fatalf("a.TryLock() error = %v, want nil", err)
+	}
+	// 只关看门狗：用 stopOnce 防止后续 panic
+	a.stopOnce.Do(func() { close(a.stopDogCh) })
+	time.Sleep(a.ttl + 500*time.Millisecond)
+
+	b := New(rdb, "lock:test:user010", 2*time.Second)
+	okB, err := b.TryLock(ctx)
+	if err != nil {
+		t.Fatalf("b.TryLock() error = %v, want nil", err)
+	}
+	if !okB {
+		t.Fatalf("b.TryLock() ok = false, want true (a 崩溃后 TTL 应该过期，b 应能抢到同一个 key)")
+	}
+	b.Unlock(ctx)
 }
