@@ -21,6 +21,15 @@ jobs:
                     --health-interval 5s
                     --health-timeout 3s
                     --health-retries 5
+            rabbitmq:
+                image: rabbitmq:3-management
+                ports:
+                    - 5672:5672
+                options: >-
+                    --health-cmd "rabbitmqctl status"
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 10
 
         steps:
         - name: Checkout Source Code
@@ -33,7 +42,7 @@ jobs:
 
         - name: Download Dependencies
           run:  go mod download
-        
+
         - name: Build
          # ./ 是当前目录，... 是"递归所有子包"的通配符
           run:  go build -v ./...
@@ -41,4 +50,10 @@ jobs:
         - name: Test and Race Detector
           # -v: 打印详细日志
           # -race: 开启数据竞争检测
+          # CI 用镜像默认账号，覆盖 .env 里的本地密码
+          # （godotenv.Load 不会覆盖已存在的环境变量，所以这里设的值会优先生效）
           run: go test -v -race ./...
+          env:
+            REDIS_PASSWORD: ""
+            RABBITMQ_USER: guest
+            RABBITMQ_PASS: guest
