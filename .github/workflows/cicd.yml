@@ -1,0 +1,121 @@
+name: Go Backend CI/CD
+
+# 触发器 (When)
+on:
+    push:
+        branches: [ main ]
+    pull_request:
+        branches: [ main ]
+
+
+#job 1:测试，“质检海关”
+jobs:
+    build-and-test:
+        runs-on: ubuntu-latest
+
+        services:
+            redis:
+                image: redis:7.0
+                ports:
+                    - 6379:6379
+                options: >-
+                    --health-cmd "redis-cli ping"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 5
+            rabbitmq:
+                image: rabbitmq:3-management
+                ports:
+                    - 5672:5672
+                options: >-
+                    --health-cmd "rabbitmqctl status"
+                    --health-interval 10s
+                    --health-timeout 5s
+                    --health-retries 10
+
+        steps:
+        - name: Checkout Source Code
+          uses: actions/checkout@v4
+
+        - name: Set up Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: '1.26'
+
+        - name: Download Dependencies
+          run:  go mod download
+
+        - name: Build
+         # ./ 是当前目录，... 是"递归所有子包"的通配符
+          run:  go build -v ./...
+
+        - name: Test and Race Detector
+          # -v: 打印详细日志
+          # -race: 开启数据竞争检测
+          # CI 用镜像默认账号，覆盖 .env 里的本地密码
+          # （godotenv.Load 不会覆盖已存在的环境变量，所以这里设的值会优先生效）
+          run: go test -v -race ./...
+          env:
+            REDIS_PASSWORD: ""
+            RABBITMQ_USER: guest
+            RABBITMQ_PASS: guest
+
+
+#job2: CI产物打包docker并推
+    build-and-push-image:
+        needs: build-and-test
+        permissions:
+          contents: read
+          packages: write
+        #只有当触发事件是 push，并且 push 的分支是 main 时，才执行这个 job 或 step
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
+
+            - name: Log in to the GitHub mirror repository
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build and push a Docker image
+              uses: docker/build-push-action@v5
+              with:
+                context: .
+                push: true
+             #用这次Git提交的 SHA 作为镜像版本号
+                tags: ghcr.io/${{ github.repository }}/aegis-gateway:${{ github.sha }}
+
+
+#job3: CD部署阶段
+    deploy:
+        needs: build-and-push-image #依旧只有镜像被推送到仓库了，才允许部署
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Log in to the VPS via SSH and run the deployment command
+              uses: appleboy/ssh-action@v1.0.3
+              with:
+                  host: ${{ secrets.VPS_HOST }}   #我的 VPS IP
+                  username: ${{ secrets.VPS_USER }}  #VPS登陆名
+                  key: ${{ secrets.VPS_SSH_KEY }}    #VPS的私钥
+                  script: |
+                     # 进入到项目目录
+                      cd /opt/aegis-gateway
+
+                     #把新的版本号写进环境变量文件
+                      echo "IMAGE_TAG=${{ github.sha }}" > .env.deploy
+
+                     #登陆仓库拉取打包好的唯一SHA版本的镜像
+                      echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+                      docker compose --env-file .env.deploy pull
+
+                     # Stop-Start 激活新容器
+                      docker compose --env-file .env.deploy up -d
+
+                     #自动清理旧镜像
+                      docker image prune -f
+
