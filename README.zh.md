@@ -131,6 +131,33 @@ WSL2 (Ubuntu) + Redis/MySQL/RabbitMQ Docker 单机部署。
 
 Goroutine profile 显示 200 并发下 390 个 goroutine 全部健康——仅在 HTTP 接收和 Redis 读取处阻塞，无 Mutex 竞争、无 GC 卡顿、无 I/O 堆积。
 
+---
+
+## 部署架构
+
+GitHub Actions 上跑端到端 CI/CD。每次 push 到 `main` 触发三个串行 job：
+
+```mermaid
+graph LR
+    Push[git push main] --> CI[GitHub Actions]
+    CI --> Test["Job 1<br/>go test -race ./..."]
+    Test --> Build["Job 2<br/>Docker 多阶段构建<br/>推到 ghcr.io/.../aegis-gateway:SHA"]
+    Build --> Deploy["Job 3<br/>SSH 进 VPS<br/>sed IMAGE_TAG → compose pull → up -d"]
+    Deploy --> VPS[(生产 VPS<br/>aegis-gateway + MariaDB<br/>+ Redis + RabbitMQ)]
+
+    classDef job fill:#e8f5e9,stroke:#2e7d32,color:#333;
+    classDef target fill:#fff3e0,stroke:#e65100,color:#333;
+    class Test,Build,Deploy job;
+    class VPS target;
+```
+
+**关键设计：**
+
+- **镜像 tag = commit SHA**：每次部署唯一可定位；回滚只需把 `IMAGE_TAG=<旧 SHA>` 就行，无需重新构建。
+- **两份 compose 文件**：`docker-compose.yml` 本地用（`build: .`），`docker-compose.prod.yml` VPS 用（`image: ghcr.io/...`），避免开发/生产配置互相污染。
+- **CI 专用 SSH key**：单独的 ed25519 keypair 只授权部署；个人 SSH key 不进 GitHub Secrets。
+- **PAT 代替 GITHUB_TOKEN 拉镜像**：VPS 用只有 `read:packages` 权限的 token，即使泄漏影响面也只读。
+- **`sed -i` 而不是 `>` 覆盖 `.env.prod`**：部署时只改 `IMAGE_TAG`，保留生产凭据，避免清空所有配置。
 
 ---
 
@@ -166,6 +193,9 @@ CREATE TABLE t_order (
 
 ```text
 aegis-gateway/
+├── .github/
+│   └── workflows/
+│       └── cicd.yml                     # CI/CD 流水线：测试 → 构建镜像 → 推 ghcr.io → SSH 部署
 ├── cmd/
 │   └── api/
 │       └── main.go                      # 程序入口，初始化各组件并启动 HTTP 服务
@@ -205,7 +235,8 @@ aegis-gateway/
 │   └── test_day3.sh                     # Day 3 接口冒烟测试脚本
 ├── go.mod
 ├── go.sum
-├── docker-compose.yml                   # 一键拉起 MySQL + Redis + RabbitMQ + aegis-gateway
+├── docker-compose.yml                   # 本地开发栈：从源码构建 aegis-gateway + MySQL + Redis + RabbitMQ
+├── docker-compose.prod.yml              # 生产部署栈：从 ghcr.io 拉 aegis-gateway 镜像
 ├── Dockerfile                           # 多阶段构建：golang:1.26-alpine → alpine:3.19
 ├── .env.example                         # 凭据模板（复制为 .env 后填入密码）
 └── LICENSE
@@ -255,7 +286,8 @@ wrk -t8 -c200 -d30s -s /tmp/reserve.lua http://localhost:8080/api/v1/reserve
 ## 进一步优化方向
 
 - [x] Graceful shutdown（SIGTERM 等消费者处理完手头消息）
-- [ ] 云端部署（Docker Compose on VPS，公网可访问）
+- [x] GitHub Actions 端到端 CI/CD：测试 → 构建镜像 → 推 ghcr.io → SSH 部署 VPS
+- [ ] 部署后健康检查 + 失败自动回滚
 - [ ] Redis pipeline 批处理（预期 QPS +50%）
 - [ ] 本地内存预扣减 + Redis 异步同步（预期 5-10x）
 - [ ] 死信表持久化（运维可追溯）

@@ -131,6 +131,34 @@ The goroutine profile shows all 390 goroutines healthy under 200 concurrency —
 
 ---
 
+## Deployment Architecture
+
+End-to-end CI/CD on GitHub Actions. Every push to `main` triggers three sequential jobs:
+
+```mermaid
+graph LR
+    Push[git push main] --> CI[GitHub Actions]
+    CI --> Test["Job 1<br/>go test -race ./..."]
+    Test --> Build["Job 2<br/>Docker multi-stage build<br/>push ghcr.io/.../aegis-gateway:SHA"]
+    Build --> Deploy["Job 3<br/>SSH to VPS<br/>sed IMAGE_TAG → compose pull → up -d"]
+    Deploy --> VPS[(Production VPS<br/>aegis-gateway + MariaDB<br/>+ Redis + RabbitMQ)]
+
+    classDef job fill:#e8f5e9,stroke:#2e7d32,color:#333;
+    classDef target fill:#fff3e0,stroke:#e65100,color:#333;
+    class Test,Build,Deploy job;
+    class VPS target;
+```
+
+**Design choices:**
+
+- **Image tag = commit SHA**: every deploy is uniquely identifiable; rollback is `IMAGE_TAG=<previous_SHA>` — no rebuild required.
+- **Two compose files**: `docker-compose.yml` for local (`build: .`) vs `docker-compose.prod.yml` for VPS (`image: ghcr.io/...`). Prevents dev/prod config cross-contamination.
+- **Dedicated CI SSH key**: a separate ed25519 keypair scoped only to deploy; personal SSH key never touches GitHub Secrets.
+- **PAT for VPS image pull**: a token with `read:packages` only — leak blast radius is read-only, distinct from the build-time `GITHUB_TOKEN`.
+- **`sed -i` over `>` for `.env.prod`**: deploys patch `IMAGE_TAG` in place, preserving production credentials in the same file.
+
+---
+
 ## Data Schema
 
 The MySQL side stores only the order record. Redis owns the hot path (stock counter + buyer set).
@@ -163,6 +191,9 @@ Full schema in [`scripts/init.sql`](scripts/init.sql).
 
 ```text
 aegis-gateway/
+├── .github/
+│   └── workflows/
+│       └── cicd.yml                     # CI/CD pipeline: test → build image → push ghcr.io → SSH deploy
 ├── cmd/
 │   └── api/
 │       └── main.go                      # Entry point: initializes components and starts the HTTP server
@@ -202,7 +233,8 @@ aegis-gateway/
 │   └── test_day3.sh                     # Day 3 smoke test script
 ├── go.mod
 ├── go.sum
-├── docker-compose.yml                   # One-shot setup: MySQL + Redis + RabbitMQ + aegis-gateway
+├── docker-compose.yml                   # Local dev stack: MySQL + Redis + RabbitMQ + builds aegis-gateway from source
+├── docker-compose.prod.yml              # Production stack on VPS: pulls aegis-gateway image from ghcr.io
 ├── Dockerfile                           # Multi-stage build: golang:1.26-alpine → alpine:3.19
 ├── .env.example                         # Credential template (copy to .env and fill in)
 └── LICENSE
@@ -254,7 +286,8 @@ wrk -t8 -c200 -d30s -s /tmp/reserve.lua http://localhost:8080/api/v1/reserve
 ## Roadmap
 
 - [x] Graceful shutdown (SIGTERM waits for in-flight consumer work)
-- [ ] Cloud deployment (Docker Compose on VPS, publicly accessible)
+- [x] End-to-end CI/CD on GitHub Actions: tests → build & push image to ghcr.io → SSH deploy to VPS
+- [ ] Post-deploy health check + automatic rollback on failure
 - [ ] Redis pipeline batching (expected +50% QPS)
 - [ ] Local in-memory pre-deduction + async Redis sync (expected 5-10x)
 - [ ] Dead letter table persistence (audit trail for operations)
