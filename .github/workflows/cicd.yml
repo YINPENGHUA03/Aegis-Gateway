@@ -81,13 +81,18 @@ jobs:
                   username: ${{ github.actor }}
                   password: ${{ secrets.GITHUB_TOKEN }}
 
+            # ghcr.io 路径要求全小写，仓库名 YINPENGHUA03/... 含大写会被拒
+            - name: Lowercase repo name
+              id: repo
+              run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
             - name: Build and push a Docker image
               uses: docker/build-push-action@v5
               with:
                 context: .
                 push: true
-             #用这次Git提交的 SHA 作为镜像版本号
-                tags: ghcr.io/${{ github.repository }}/aegis-gateway:${{ github.sha }}
+                # 用 commit SHA 当镜像版本号，保证每次部署唯一可回滚
+                tags: ghcr.io/${{ steps.repo.outputs.name }}/aegis-gateway:${{ github.sha }}
 
 
 #job3: CD部署阶段
@@ -103,19 +108,20 @@ jobs:
                   username: ${{ secrets.VPS_USER }}  #VPS登陆名
                   key: ${{ secrets.VPS_SSH_KEY }}    #VPS的私钥
                   script: |
-                     # 进入到项目目录
                       cd /opt/aegis-gateway
 
-                     #把新的版本号写进环境变量文件
-                      echo "IMAGE_TAG=${{ github.sha }}" > .env.deploy
+                      # 1. 就地替换 IMAGE_TAG，保留 .env.prod 里其他配置（密码、地址）
+                      sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${{ github.sha }}|" .env.prod
 
-                     #登陆仓库拉取打包好的唯一SHA版本的镜像
-                      echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-                      docker compose --env-file .env.deploy pull
+                      # 2. 登录 ghcr.io（用专门的 PAT，不是 GITHUB_TOKEN）
+                      echo "${{ secrets.GHCR_PULL_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-                     # Stop-Start 激活新容器
-                      docker compose --env-file .env.deploy up -d
+                      # 3. 只拉 aegis-gateway 镜像，基础设施不动
+                      docker compose --env-file .env.prod -f docker-compose.prod.yml pull aegis-gateway
 
-                     #自动清理旧镜像
+                      # 4. compose 自动识别镜像变更，只重启 aegis-gateway
+                      docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+
+                      # 5. 清理悬空镜像，避免磁盘膨胀
                       docker image prune -f
 

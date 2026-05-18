@@ -34,7 +34,7 @@ services:
     restart: always
 
   mysql:
-    image: mysql:8.0
+    image: mariadb:10.11
     container_name: appoint_mysql
     ports:
       - "3309:3306"
@@ -43,10 +43,10 @@ services:
       MYSQL_DATABASE: "${MYSQL_DATABASE}"
     volumes:
       - mysql_data:/var/lib/mysql
-    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-time-zone='+08:00'
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-time-zone=+08:00
     restart: always
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
       timeout: 5s
       retries: 10
