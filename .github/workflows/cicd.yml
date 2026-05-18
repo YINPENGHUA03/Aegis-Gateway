@@ -81,18 +81,13 @@ jobs:
                   username: ${{ github.actor }}
                   password: ${{ secrets.GITHUB_TOKEN }}
 
-            # ghcr.io 路径要求全小写，仓库名 YINPENGHUA03/... 含大写会被拒
-            - name: Lowercase repo name
-              id: repo
-              run: echo "name=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
             - name: Build and push a Docker image
               uses: docker/build-push-action@v5
               with:
                 context: .
                 push: true
-                # 用 commit SHA 当镜像版本号，保证每次部署唯一可回滚
-                tags: ghcr.io/${{ steps.repo.outputs.name }}/aegis-gateway:${{ github.sha }}
+                # 直接用 owner/aegis-gateway，避免仓库名带 - 结尾导致 Docker 拒绝
+                tags: ghcr.io/yinpenghua03/aegis-gateway:${{ github.sha }}
 
 
 #job3: CD部署阶段
